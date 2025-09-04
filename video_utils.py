@@ -27,6 +27,19 @@ def get_video_description(filepath):
     except Exception:
         return "No description available."
 
+def get_video_duration(filepath):
+    try:
+        result = subprocess.run([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "json", filepath
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        data = json.loads(result.stdout)
+        duration = float(data['format']['duration'])
+        return duration
+    except Exception:
+        return 0  # Default if unknown
+
 def clean_filename(filename):
     name = os.path.splitext(filename)[0]
     name = re.sub(r"^\d+\s*", "", name)

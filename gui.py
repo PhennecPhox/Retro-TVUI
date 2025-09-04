@@ -2,8 +2,9 @@ import os
 import tkinter as tk
 import vlc
 from datetime import datetime, timedelta
+import math
 from tkinter import PhotoImage
-from video_utils import get_video_description, clean_filename
+from video_utils import get_video_description, clean_filename, get_video_duration
 from constants import LEFT_LOGO_PATH, RIGHT_LOGO_PATH
 
 class GridScroller(tk.Tk):
@@ -26,7 +27,7 @@ class GridScroller(tk.Tk):
         self.destination_path = destination_path
         self.max_rows = len(folder_file_data)
         self.max_cols = max(len(files) for _, files in folder_file_data)
-        self.visible_rows = 4
+        self.visible_rows = 5
         self.visible_cols = 3
         self.visible_row_start = 0
         self.visible_col_start = 0
@@ -36,7 +37,9 @@ class GridScroller(tk.Tk):
 
         self.video_frame = tk.Frame(self, bg="black")
         self.label_frame = tk.Frame(self, bg="navy")
-        self.main_frame = tk.Frame(self, bg="purple")
+        self.main_frame = tk.Frame(self)
+        self.canvas = tk.Canvas(self.main_frame, bg="purple")
+        self.canvas.pack(fill="both", expand=True)
 
         self.grid_frame = tk.Frame(self)
         self.grid_frame.place(x=0, y=0)
@@ -88,8 +91,9 @@ class GridScroller(tk.Tk):
         self.description_label.place(x=0, y=header_height, width=content_width, height=desc_height)
 
         label_y = header_height + desc_height
-        self.label_frame.place(x=0, y=label_y, width=win_width)
-        self.main_frame.place(x=0, y=label_y+29, width=win_width, height=win_height-video_height)
+        label_height = 30  # height of the timeline bar
+        self.label_frame.place(x=0, y=label_y, width=win_width, height=label_height)
+        self.main_frame.place(x=0, y=label_y + label_height, width=win_width, height=win_height - (label_y + label_height))
 
         try:
             self.player.set_hwnd(self.video_frame.winfo_id())
@@ -101,19 +105,22 @@ class GridScroller(tk.Tk):
     def create_all_buttons(self):
         for row_index, (folder, files) in enumerate(self.folder_file_data):
             parts = folder.replace("\\", "/").split("/")
-            if len(parts) >= 2:
-                display_name = f"{parts[-1]}\n{parts[-2]}"
-            else:
-                display_name = parts[-1]
-            label = tk.Label(self.main_frame, text=display_name, width=15, height=3, bg="steel blue", relief="raised", justify="center")
+            display_name = f"{parts[-1]}\n{parts[-2]}" if len(parts) >= 2 else parts[-1]
+            label = tk.Label(self.canvas, text=display_name, width=14, height=2, bg="steel blue", relief="raised", justify="center")
             self.button_map[(row_index, -1)] = label
 
             for col_index, filename in enumerate(files):
+                file_path = os.path.join(self.destination_path, folder, filename)
+                duration = get_video_duration(file_path)
+                span = max(1, min(3, math.ceil(duration / 1800)))
                 clean_name = clean_filename(filename)
-                btn = tk.Button(self.main_frame, text=clean_name, width=20, height=2)
-                self.button_map[(row_index, col_index)] = btn
+                btn = tk.Button(self.canvas, text=clean_name)
+                self.button_map[(row_index, col_index)] = (btn, span)
 
     def layout_visible_grid(self):
+        self.canvas.delete("all")
+
+        # Generate timeline labels
         for widget in self.label_frame.winfo_children():
             widget.destroy()
 
@@ -123,39 +130,38 @@ class GridScroller(tk.Tk):
             start_time += timedelta(minutes=30)
         start_time += timedelta(minutes=30 * self.visible_col_start)
 
+        # Day label
         day_label = "Tomorrow" if start_time.day != now.day else "Today"
         tk.Label(self.label_frame, text=day_label, width=10, bg="navy", fg="white", font=("Arial", 12, "bold")).grid(row=0, column=0, padx=2, pady=2)
 
+        # Time slots
         for vc in range(self.visible_cols):
             slot_time = start_time + timedelta(minutes=30 * vc)
             time_str = slot_time.strftime("%I:%M%p").lstrip("0").lower().replace(":00", "")
-            tk.Label(self.label_frame, text=time_str, width=20, bg="#ccc").grid(row=0, column=vc + 1, padx=1, pady=2)
+            tk.Label(self.label_frame, text=time_str, width=23, bg="#ccc").grid(row=0, column=vc + 1, padx=1, pady=2)
 
-        for (r, c), widget in self.button_map.items():
-            if c == -1:
-                if self.visible_row_start <= r < self.visible_row_start + self.visible_rows:
-                    widget.grid(row=r - self.visible_row_start, column=0, padx=0, pady=0, sticky="w")
+        base_width = 170
+        base_height = 42
+        label_width = 110
+
+        for (r, c), val in self.button_map.items():
+            if self.visible_row_start <= r < self.visible_row_start + self.visible_rows:
+                y = (r - self.visible_row_start) * base_height
+                if c == -1:
+                    self.canvas.create_window(0, y, window=val, width=label_width, height=base_height, anchor="nw")
                 else:
-                    widget.grid_forget()
-            else:
-                if (
-                    self.visible_row_start <= r < self.visible_row_start + self.visible_rows and
-                    self.visible_col_start <= c < self.visible_col_start + self.visible_cols
-                ):
-                    widget.grid(
-                        row=r - self.visible_row_start,
-                        column=c - self.visible_col_start + 1,
-                        padx=0, pady=0, sticky="w"
-                    )
-                else:
-                    widget.grid_forget()
+                    btn, span = val
+                    if self.visible_col_start <= c < self.visible_col_start + self.visible_cols:
+                        x = (c - self.visible_col_start) * base_width + label_width
+                        self.canvas.create_window(x, y, window=btn, width=base_width * span, height=base_height, anchor="nw")
 
         self.update_highlight()
         self.update_description()
 
     def update_highlight(self):
-        for (r, c), btn in self.button_map.items():
+        for (r, c), value in self.button_map.items():
             if c != -1:
+                btn, _ = value
                 if r == self.highlight_row and c == self.highlight_col:
                     btn.configure(bg="orange")
                 else:
